@@ -4,6 +4,7 @@
  *  2) From 12:00 noon on the day → a reminder (once per day): who hasn't replied is asked to reply,
  *     who said they're coming gets a welcome, who apologised gets nothing.
  *  3) An event people were told about is cancelled → everyone is told it's off (or back in Riyadh).
+ *  4) An admin writes a message on the site (bell → أرسل تنبيه للكل) → it goes to everyone.
  *  Manual test: run the workflow by hand with a name → a test notification to that person only; type الكل → to everyone.
  * Needs the secret FIREBASE_SERVICE_ACCOUNT (the service-account JSON from Firebase).
  */
@@ -80,8 +81,38 @@ async function send(tag, make, onlyName) {
     await send("test", (u) => ({ title: "تجربة من العليّة 🌴", body: `هلا${firstName(u.name) ? " " + firstName(u.name) : ""}، هذي رسالة تجربة. التنبيهات شغّالة عندك تمام.`, link: SITE }), everyone ? "" : TEST_NAME);
     return;
   }
+  // only one run at a time (cron-job.org every 2 min + GitHub's own schedule can overlap) → no double notifications
+  const lock = db.collection("locks").doc("runner");
+  const me = Math.random().toString(36).slice(2);
+  const got = await db.runTransaction(async (tx) => {
+    const l = await tx.get(lock);
+    if (l.exists && Date.now() - (l.get("t") || 0) < 4 * 60000) return false;
+    tx.set(lock, { t: Date.now(), by: me });
+    return true;
+  });
+  if (!got) { console.log("another run is busy, skipping"); return; }
+
   const now = riyadhNow();
   console.log("Riyadh", now);
+
+  // ---- 0) admin messages from the site (broadcasts with status "pending")
+  const bc = await db.collection("broadcasts").where("status", "==", "pending").get();
+  const pend = bc.docs.sort((x, y) => String(x.get("at")).localeCompare(String(y.get("at"))));
+  let sentNow = 0;
+  for (const d of pend) {
+    const x = d.data();
+    const ageMin = (Date.now() - Date.parse(x.at || 0)) / 60000;
+    if (!(ageMin < 120) || sentNow >= 3) { // too old, or too many at once → don't flood phones
+      await d.ref.update({ status: "skipped", doneAt: new Date().toISOString() });
+      continue;
+    }
+    const title = String(x.title || "تنبيه من العليّة 🌴").slice(0, 60);
+    const body = String(x.body || "").slice(0, 200);
+    if (!body) { await d.ref.update({ status: "skipped" }); continue; }
+    await send("bc-" + d.id, () => ({ title, body, link: SITE }));
+    await d.ref.update({ status: "sent", doneAt: new Date().toISOString() });
+    sentNow++;
+  }
 
   // ---- 3) cancellations (the site leaves a note in "cancelled" when an announced event is removed)
   const cancels = await db.collection("cancelled").get();
@@ -142,4 +173,5 @@ async function send(tag, make, onlyName) {
       await doc.ref.update({ remindedOn: day, announced: true });
     }
   }
+  await lock.delete().catch(() => {});
 })().catch((e) => { console.error(e); process.exit(1); });
