@@ -4,7 +4,7 @@
  *  2) From 12:00 noon on the day → a reminder (once per day): who hasn't replied is asked to reply,
  *     who said they're coming gets a welcome, who apologised gets nothing.
  *  3) An event people were told about is cancelled → everyone is told it's off (or back in Riyadh).
- *  Manual test: run the workflow by hand with a name → a test notification goes only to that person's devices.
+ *  Manual test: run the workflow by hand with a name → a test notification to that person only; type الكل → to everyone.
  * Needs the secret FIREBASE_SERVICE_ACCOUNT (the service-account JSON from Firebase).
  */
 const admin = require("firebase-admin");
@@ -76,7 +76,8 @@ async function send(tag, make, onlyName) {
 
 (async () => {
   if (TEST_NAME) {
-    await send("test", (u) => ({ title: "تجربة من العليّة 🌴", body: `هلا ${firstName(u.name) || TEST_NAME}، التنبيهات شغّالة عندك تمام.`, link: SITE }), TEST_NAME);
+    const everyone = ["الكل", "الجميع", "all"].includes(norm(TEST_NAME).toLowerCase());
+    await send("test", (u) => ({ title: "تجربة من العليّة 🌴", body: `هلا${firstName(u.name) ? " " + firstName(u.name) : ""}، هذي رسالة تجربة. التنبيهات شغّالة عندك تمام.`, link: SITE }), everyone ? "" : TEST_NAME);
     return;
   }
   const now = riyadhNow();
@@ -90,7 +91,7 @@ async function send(tag, make, onlyName) {
     if (day >= now.date && !backOn) {
       const when = whenText(day, now.date);
       const note = x.back
-        ? { title: "تغيير: اجتماع آل علي بالرياض", body: `اجتماع ${when} رجع بالرياض مثل العادة، مو بالعليّة.` }
+        ? { title: "تغيير: اجتماع آل علي بالرياض", body: `اجتماع ${when} صار بالرياض مثل العادة، مو بالعليّة.` }
         : { title: `انلغى ${evName(x)} ❌`, body: `${evName(x)} ${when} بالعليّة انلغى. نشوفكم على خير.` };
       await send("ev-" + day, () => note);
     }
